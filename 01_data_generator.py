@@ -73,7 +73,7 @@ machines_rows = [
         machine_id=r[0], machine_name=r[1], machine_type=r[2],
         work_center=r[3], num_shifts=r[4], capacity_hrs_per_shift=r[5],
         vendor=r[6], installation_year=r[7], status=r[8],
-        hourly_rate_usd=rand_between(85, 250),
+        hourly_rate_usd=rand_between(45, 80),
         preventive_maint_interval_hrs=random.choice([500, 750, 1000]),
         last_pm_date=str(rand_date(date(2024, 1, 1), date(2025, 9, 30))),
         notes=f"{r[1]} installed in {r[7]}"

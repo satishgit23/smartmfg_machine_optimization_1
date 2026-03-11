@@ -646,11 +646,11 @@ SELECT
   ROUND(SUM(farm_out_cost_usd), 2)        AS total_farm_out_cost,
   ROUND(AVG(farm_out_cost_usd), 2)        AS avg_cost_per_order,
   ROUND(SUM(standard_total_hrs), 2)       AS equivalent_internal_hrs,
-  -- Implied internal cost if done in-house (machine rate × hrs); requires joining machine data
-  -- Simplified: use $150/hr blended rate
-  ROUND(SUM(standard_total_hrs) * 150, 2) AS implied_internal_cost,
+  -- Implied internal cost if done in-house — blended machine rate ~$65/hr
+  -- (reflects the lower capital-depreciation-adjusted rate after recent investment)
+  ROUND(SUM(standard_total_hrs) * 65, 2) AS implied_internal_cost,
   ROUND(
-    (SUM(farm_out_cost_usd) - SUM(standard_total_hrs) * 150)
+    (SUM(farm_out_cost_usd) - SUM(standard_total_hrs) * 65)
     / NULLIF(SUM(farm_out_cost_usd), 0) * 100, 1
   )                                       AS cost_premium_pct
 FROM LIVE.silver_work_orders
