@@ -11,6 +11,17 @@
 --   Silver  → cleaned, typed, validated data
 --   Gold    → aggregated, business-ready metrics
 -- =============================================================
+-- EXPECTATION STRATEGY
+--   WARN  (no action)            : track violations, keep all rows
+--                                  Used for business-rule anomalies that
+--                                  should be visible but not removed.
+--   DROP ROW                     : track violations, remove bad rows
+--                                  Used for records that would corrupt
+--                                  downstream joins or aggregations.
+--   FAIL UPDATE                  : abort pipeline on first violation
+--                                  Used for invariants that must NEVER
+--                                  be false in clean source data.
+-- =============================================================
 -- Pipeline Configuration Parameters (set in pipeline settings):
 --   catalog      = satsen_catalog
 --   schema       = smartmfg_machine_optimization_1
@@ -20,10 +31,20 @@
 
 -- ─────────────────────────────────────────────────────────────
 -- BRONZE LAYER — Raw ingestion (append-only streaming tables)
+--   Expectations here are WARN-only: the raw layer is an
+--   exact copy of the source; we observe quality but never
+--   drop or fail on unvalidated data.
 -- ─────────────────────────────────────────────────────────────
 
 -- Bronze: Machines Master Data
 CREATE OR REFRESH STREAMING TABLE bronze_machines
+(
+  -- Format guards (warn-only: raw data should not be dropped)
+  CONSTRAINT bz_machine_id_not_null   EXPECT (machine_id IS NOT NULL),
+  CONSTRAINT bz_machine_id_format     EXPECT (machine_id RLIKE '^MCH-[0-9]+'),
+  CONSTRAINT bz_status_not_null       EXPECT (status IS NOT NULL),
+  CONSTRAINT bz_hourly_rate_positive  EXPECT (CAST(hourly_rate_usd AS DOUBLE) > 0)
+)
 CLUSTER BY (machine_id)
 COMMENT "Raw machine master data ingested from Oracle ERP CSV export"
 AS
@@ -43,6 +64,12 @@ FROM STREAM read_files(
 
 -- Bronze: Routings (Part-Operation Sequences)
 CREATE OR REFRESH STREAMING TABLE bronze_routings
+(
+  CONSTRAINT bz_routing_id_not_null   EXPECT (routing_id IS NOT NULL),
+  CONSTRAINT bz_part_number_not_null  EXPECT (part_number IS NOT NULL),
+  CONSTRAINT bz_op_sequence_positive  EXPECT (CAST(operation_sequence AS INT) > 0),
+  CONSTRAINT bz_run_time_non_negative EXPECT (CAST(run_time_hrs_per_unit AS DOUBLE) >= 0)
+)
 CLUSTER BY (part_number)
 COMMENT "Raw part routing and operation sequence data from engineering system"
 AS
@@ -61,6 +88,13 @@ FROM STREAM read_files(
 
 -- Bronze: Work Orders (from Oracle ERP)
 CREATE OR REFRESH STREAMING TABLE bronze_work_orders
+(
+  CONSTRAINT bz_wo_id_not_null        EXPECT (work_order_id IS NOT NULL),
+  CONSTRAINT bz_wo_part_not_null      EXPECT (part_number IS NOT NULL),
+  CONSTRAINT bz_wo_qty_positive       EXPECT (CAST(order_qty AS INT) > 0),
+  CONSTRAINT bz_wo_status_not_null    EXPECT (status IS NOT NULL),
+  CONSTRAINT bz_wo_due_date_not_null  EXPECT (due_date IS NOT NULL)
+)
 CLUSTER BY (work_order_id)
 COMMENT "Raw work order data exported from Oracle ERP"
 AS
@@ -79,6 +113,14 @@ FROM STREAM read_files(
 
 -- Bronze: Machine Sensor Data (IoT / Shop-Floor Systems)
 CREATE OR REFRESH STREAMING TABLE bronze_sensor_data
+(
+  CONSTRAINT bz_sensor_id_not_null    EXPECT (sensor_id IS NOT NULL),
+  CONSTRAINT bz_sensor_machine_id     EXPECT (machine_id IS NOT NULL),
+  CONSTRAINT bz_temp_parseable        EXPECT (CAST(temperature_celsius AS DOUBLE) IS NOT NULL),
+  CONSTRAINT bz_ts_not_null           EXPECT (reading_timestamp IS NOT NULL),
+  -- Any row without a machine ID is unroutable and must not enter the lake
+  CONSTRAINT bz_machine_ref_required  EXPECT (machine_id IS NOT NULL) ON VIOLATION DROP ROW
+)
 CLUSTER BY (machine_id)
 COMMENT "Raw IoT sensor data from shop-floor connected machines"
 AS
@@ -96,13 +138,48 @@ FROM STREAM read_files(
 
 -- ─────────────────────────────────────────────────────────────
 -- SILVER LAYER — Cleaned, typed, validated streaming tables
+--   Richer set of expectations across all three violation modes.
 -- ─────────────────────────────────────────────────────────────
 
 -- Silver: Machines
 CREATE OR REFRESH STREAMING TABLE silver_machines
 (
-  CONSTRAINT valid_machine_id EXPECT (machine_id IS NOT NULL)     ON VIOLATION DROP ROW,
-  CONSTRAINT valid_status     EXPECT (status IN ('Active','Maintenance','Idle'))
+  -- ── FAIL UPDATE ─────────────────────────────────────────────
+  -- machine_id is the primary key for every downstream join;
+  -- a NULL here indicates a pipeline or source-feed bug.
+  CONSTRAINT sv_machine_pk_never_null
+    EXPECT (machine_id IS NOT NULL)
+    ON VIOLATION FAIL UPDATE,
+
+  -- ── DROP ROW ────────────────────────────────────────────────
+  -- Records with no capacity are meaningless for utilisation math.
+  CONSTRAINT sv_machine_capacity_positive
+    EXPECT (capacity_hrs_per_shift > 0)
+    ON VIOLATION DROP ROW,
+  -- Negative hourly rates would corrupt cost calculations.
+  CONSTRAINT sv_hourly_rate_positive
+    EXPECT (hourly_rate_usd > 0)
+    ON VIOLATION DROP ROW,
+
+  -- ── WARN (no action) ────────────────────────────────────────
+  -- Standard allowed statuses
+  CONSTRAINT sv_machine_status_valid
+    EXPECT (status IN ('Active','Maintenance','Idle')),
+  -- A shift count outside 1–3 is unusual; flag for review.
+  CONSTRAINT sv_shifts_in_range
+    EXPECT (num_shifts BETWEEN 1 AND 3),
+  -- Capacity per shift is typically 6–10 hrs; extremes get flagged.
+  CONSTRAINT sv_capacity_shift_range
+    EXPECT (capacity_hrs_per_shift BETWEEN 4 AND 12),
+  -- Machines installed before 2000 may need replacement planning.
+  CONSTRAINT sv_installation_year_recent
+    EXPECT (installation_year >= 2000),
+  -- PM interval should be set to a meaningful value.
+  CONSTRAINT sv_pm_interval_reasonable
+    EXPECT (preventive_maint_interval_hrs BETWEEN 100 AND 3000),
+  -- Last PM date must be set; missing = maintenance gap.
+  CONSTRAINT sv_last_pm_date_set
+    EXPECT (last_pm_date IS NOT NULL)
 )
 CLUSTER BY (machine_id)
 COMMENT "Cleaned and typed machine master data with quality constraints"
@@ -133,8 +210,36 @@ WHERE machine_id IS NOT NULL;
 -- Silver: Routings
 CREATE OR REFRESH STREAMING TABLE silver_routings
 (
-  CONSTRAINT valid_routing_id EXPECT (routing_id IS NOT NULL) ON VIOLATION DROP ROW,
-  CONSTRAINT valid_sequence   EXPECT (operation_sequence > 0)
+  -- ── FAIL UPDATE ─────────────────────────────────────────────
+  -- routing_id + part_number together identify a routing record;
+  -- either being NULL breaks all downstream part-machine joins.
+  CONSTRAINT sv_routing_pk_never_null
+    EXPECT (routing_id IS NOT NULL AND part_number IS NOT NULL)
+    ON VIOLATION FAIL UPDATE,
+
+  -- ── DROP ROW ────────────────────────────────────────────────
+  -- Operation sequence ≤ 0 is logically impossible; drop it.
+  CONSTRAINT sv_routing_seq_positive
+    EXPECT (operation_sequence > 0)
+    ON VIOLATION DROP ROW,
+  -- Negative scrap rates are data-entry errors.
+  CONSTRAINT sv_scrap_rate_non_negative
+    EXPECT (scrap_rate_pct >= 0)
+    ON VIOLATION DROP ROW,
+
+  -- ── WARN (no action) ────────────────────────────────────────
+  -- Setup time of 0 is unusual but not impossible (minor ops).
+  CONSTRAINT sv_setup_time_non_negative
+    EXPECT (setup_time_hrs >= 0),
+  -- Run time > 0 is expected for meaningful operations.
+  CONSTRAINT sv_run_time_positive
+    EXPECT (run_time_hrs_per_unit > 0),
+  -- Scrap rates above 30% are operationally alarming.
+  CONSTRAINT sv_scrap_rate_reasonable
+    EXPECT (scrap_rate_pct BETWEEN 0 AND 30),
+  -- Every routing should map to a work centre.
+  CONSTRAINT sv_routing_work_center_set
+    EXPECT (work_center IS NOT NULL)
 )
 CLUSTER BY (part_number)
 COMMENT "Cleaned routing and operation data with type-safe columns"
@@ -162,10 +267,55 @@ WHERE routing_id IS NOT NULL
 -- Silver: Work Orders
 CREATE OR REFRESH STREAMING TABLE silver_work_orders
 (
-  CONSTRAINT valid_wo_id      EXPECT (work_order_id IS NOT NULL)    ON VIOLATION DROP ROW,
-  CONSTRAINT valid_part       EXPECT (part_number IS NOT NULL)      ON VIOLATION DROP ROW,
-  CONSTRAINT valid_qty        EXPECT (order_qty > 0)                ON VIOLATION DROP ROW,
-  CONSTRAINT valid_status     EXPECT (status IN ('Open','In Progress','Complete','Farm-Out'))
+  -- ── FAIL UPDATE ─────────────────────────────────────────────
+  -- A work order with no ID or part number cannot be traced
+  -- back to the source system — treat as a critical feed error.
+  CONSTRAINT sv_wo_pk_never_null
+    EXPECT (work_order_id IS NOT NULL AND part_number IS NOT NULL)
+    ON VIOLATION FAIL UPDATE,
+
+  -- ── DROP ROW ────────────────────────────────────────────────
+  -- Zero or negative quantity makes hours calculations invalid.
+  CONSTRAINT sv_wo_qty_positive
+    EXPECT (order_qty > 0)
+    ON VIOLATION DROP ROW,
+  -- A negative farm-out cost is a data error; remove the record.
+  CONSTRAINT sv_farmout_cost_non_negative
+    EXPECT (farm_out_cost_usd IS NULL OR farm_out_cost_usd >= 0)
+    ON VIOLATION DROP ROW,
+  -- Setup time cannot be negative.
+  CONSTRAINT sv_setup_time_non_negative
+    EXPECT (setup_time_hrs >= 0)
+    ON VIOLATION DROP ROW,
+
+  -- ── WARN (no action) ────────────────────────────────────────
+  -- Allowed order statuses; others are flagged for triage.
+  CONSTRAINT sv_wo_status_valid
+    EXPECT (status IN ('Open','In Progress','Complete','Farm-Out')),
+  -- Only three priority levels are recognised.
+  CONSTRAINT sv_wo_priority_valid
+    EXPECT (priority IN ('High','Medium','Low')),
+  -- Recognised work centres; new ones should be registered first.
+  CONSTRAINT sv_wo_work_center_known
+    EXPECT (work_center IN ('WC-MILL','WC-TURN','WC-DRILL',
+                             'WC-MULTITASK','WC-TRANSFER','WC-QC')),
+  -- Due date must be set for scheduling.
+  CONSTRAINT sv_wo_due_date_set
+    EXPECT (due_date IS NOT NULL),
+  -- Scheduled start must precede scheduled end.
+  CONSTRAINT sv_wo_sched_dates_ordered
+    EXPECT (scheduled_start IS NULL
+         OR scheduled_end   IS NULL
+         OR scheduled_start <= scheduled_end),
+  -- Farm-out orders should always carry a vendor name.
+  CONSTRAINT sv_farmout_has_vendor
+    EXPECT (status != 'Farm-Out' OR farm_out_vendor IS NOT NULL),
+  -- Completed orders are expected to have an actual end timestamp.
+  CONSTRAINT sv_complete_has_actual_end
+    EXPECT (status != 'Complete' OR actual_end IS NOT NULL),
+  -- Run time per unit should be positive for production operations.
+  CONSTRAINT sv_run_time_positive
+    EXPECT (run_time_hrs_per_unit > 0)
 )
 CLUSTER BY (work_order_id, machine_id)
 COMMENT "Cleaned, typed work orders with derived scheduling metrics"
@@ -213,9 +363,59 @@ WHERE work_order_id IS NOT NULL
 -- Silver: Machine Sensor Data
 CREATE OR REFRESH STREAMING TABLE silver_sensor_data
 (
-  CONSTRAINT valid_sensor_id  EXPECT (sensor_id IS NOT NULL)  ON VIOLATION DROP ROW,
-  CONSTRAINT valid_machine    EXPECT (machine_id IS NOT NULL) ON VIOLATION DROP ROW,
-  CONSTRAINT valid_temp       EXPECT (CAST(temperature_celsius AS DOUBLE) BETWEEN 0 AND 200)
+  -- ── FAIL UPDATE ─────────────────────────────────────────────
+  -- A sensor reading with no machine reference is unroutable
+  -- and indicates a feed misconfiguration, not dirty data.
+  CONSTRAINT sv_sensor_machine_never_null
+    EXPECT (machine_id IS NOT NULL)
+    ON VIOLATION FAIL UPDATE,
+
+  -- ── DROP ROW ────────────────────────────────────────────────
+  -- Sensor ID must be present to de-duplicate readings.
+  CONSTRAINT sv_sensor_id_required
+    EXPECT (sensor_id IS NOT NULL)
+    ON VIOLATION DROP ROW,
+  -- Temperature above 130 °C is physically implausible for our
+  -- machines; likely a sensor fault — remove to protect aggregates.
+  CONSTRAINT sv_temp_not_extreme
+    EXPECT (temperature_celsius < 130)
+    ON VIOLATION DROP ROW,
+  -- Vibration above 8 mm/s indicates a sensor malfunction or
+  -- catastrophic fault; exclude from trend calculations.
+  CONSTRAINT sv_vibration_not_extreme
+    EXPECT (vibration_mm_s < 8.0)
+    ON VIOLATION DROP ROW,
+  -- Tool wear cannot exceed 100 % — clamp logic in generator
+  -- should prevent this, but guard downstream calculations.
+  CONSTRAINT sv_tool_wear_max_100
+    EXPECT (tool_wear_pct <= 100)
+    ON VIOLATION DROP ROW,
+
+  -- ── WARN (no action) ────────────────────────────────────────
+  -- Operational temperature alert threshold (anomaly band).
+  CONSTRAINT sv_temp_operational_range
+    EXPECT (temperature_celsius BETWEEN 15 AND 95),
+  -- Vibration warning threshold per maintenance spec.
+  CONSTRAINT sv_vibration_warning_limit
+    EXPECT (vibration_mm_s <= 5.0),
+  -- Spindle speed below 100 rpm while running may indicate a stall.
+  CONSTRAINT sv_spindle_speed_reasonable
+    EXPECT (spindle_speed_rpm >= 0),
+  -- Power consumption must be non-negative.
+  CONSTRAINT sv_power_non_negative
+    EXPECT (power_consumption_kw >= 0),
+  -- Coolant flow below 1 L/min while machine is running is a warning.
+  CONSTRAINT sv_coolant_flow_running
+    EXPECT (coolant_flow_lpm >= 1.0 OR machine_status != 'Running'),
+  -- Tool wear above 80 % triggers a pre-emptive change advisory.
+  CONSTRAINT sv_tool_wear_advisory
+    EXPECT (tool_wear_pct < 80),
+  -- Machine status values must be from the known set.
+  CONSTRAINT sv_machine_status_valid
+    EXPECT (machine_status IN ('Running','Idle','Maintenance')),
+  -- Sensor timestamp must be present to produce time-series metrics.
+  CONSTRAINT sv_reading_ts_not_null
+    EXPECT (reading_timestamp IS NOT NULL)
 )
 CLUSTER BY (machine_id, reading_timestamp)
 COMMENT "Cleaned sensor readings with anomaly scoring for predictive maintenance"
