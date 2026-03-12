@@ -267,20 +267,80 @@ active_machines = [r for r in machines_data if r[8] in ("Active",)]
 sensor_start    = datetime(2025, 2, 1, 0, 0)
 sensor_hours    = 24 * 30   # 30 days
 
-# Maintenance alert thresholds per machine type
+# Maintenance alert thresholds per machine type (normal operating ceiling)
 temp_limits  = {"CNC Vertical Machining Center": 75, "CNC Lathe": 70, "CNC Turning Center": 68}
 default_temp = 65
+
+# ── Per-machine maintenance profiles ─────────────────────────────────────
+# Controls how worn/healthy each machine looks.
+# Gold layer urgency (computed per day per machine):
+#   Critical : MIN(health_score) < 40  OR  MAX(tool_wear_pct) > 90
+#   Warning  : MIN(health_score) < 65  OR  MAX(tool_wear_pct) > 75
+#   Normal   : everything else
+#
+# Health score deductions per reading:
+#   tool_wear > 80 → -30,  vibration > 4.0 → -25,
+#   temperature > 80 → -20,  anomaly → -10
+#
+# KEY DESIGN RULE for robust daily urgency:
+#   For Warning/Critical machines, accrual is set high enough that the machine
+#   hits its reset threshold WITHIN A SINGLE 17-hour production day.
+#   Formula: (reset_pct - 5) / min_accrual < 17 hrs ensures intra-day reset.
+#   This guarantees MAX(tool_wear) = reset_pct on EVERY production day,
+#   regardless of which day in the 30-day window is the "last reading date."
+#
+# Designed distribution across 10 active machines:
+#   Normal  (7): MCH-001, MCH-002, MCH-004, MCH-005, MCH-007, MCH-009, MCH-011
+#   Warning (2): MCH-003, MCH-006  (max_wear 77-89 → > 75, never > 90)
+#   Critical(1): MCH-010           (max_wear 92 > 90 AND health < 40)
+#
+# Profile keys:
+#   reset_pct     – tool wear % that triggers a PM tool change (resets wear to ~5%)
+#   accrual       – (min, max) wear increase per production hour
+#   anomaly_rate  – probability of an anomaly event per production hour
+#   temp_extra    – degrees C added to normal temp ceiling (simulates heat buildup)
+#   vib_range     – (min, max) normal vibration in mm/s
+# ──────────────────────────────────────────────────────────────────────────
+MACHINE_PROFILES = {
+    # ── Normal machines — well-maintained, frequent PM, low anomaly rate ──
+    # Low accrual (0.04-0.24/hr) means tool wear cycles slowly.
+    # reset_pct ≤ 72 ensures max_wear ≤ 72% (well below 75 Warning threshold).
+    # Vibration ≤ 2.5 mm/s and temp within limits keep health score ≥ 75 every day.
+    "MCH-001": dict(reset_pct=68,  accrual=(0.08, 0.20), anomaly_rate=0.020, temp_extra=0,  vib_range=(0.3, 2.2)),  # Haas VF-4SS      — flagship mill, proactive PM
+    "MCH-002": dict(reset_pct=70,  accrual=(0.10, 0.24), anomaly_rate=0.025, temp_extra=0,  vib_range=(0.4, 2.5)),  # Mazak QT-200     — reliable turner
+    "MCH-004": dict(reset_pct=70,  accrual=(0.09, 0.22), anomaly_rate=0.020, temp_extra=0,  vib_range=(0.3, 2.3)),  # Okuma LB3000     — well-maintained lathe
+    "MCH-005": dict(reset_pct=65,  accrual=(0.07, 0.18), anomaly_rate=0.015, temp_extra=0,  vib_range=(0.2, 1.8)),  # DMG MORI DMU 50  — newest, pristine condition
+    "MCH-007": dict(reset_pct=72,  accrual=(0.10, 0.23), anomaly_rate=0.020, temp_extra=0,  vib_range=(0.4, 2.4)),  # Mazak Integrex   — high-value, proactive PM
+    "MCH-009": dict(reset_pct=62,  accrual=(0.04, 0.12), anomaly_rate=0.012, temp_extra=0,  vib_range=(0.1, 1.4)),  # Brown & Sharpe CMM — precision QC, minimal wear
+    "MCH-011": dict(reset_pct=70,  accrual=(0.09, 0.21), anomaly_rate=0.020, temp_extra=0,  vib_range=(0.3, 2.2)),  # Makino A61NX     — well-maintained HMC
+
+    # ── Warning machines — deferred PM, high intra-day tool wear ──
+    # accrual=5.0-7.0/hr ensures (reset_pct - 5) / 5.0 < 17 hrs → intra-day reset.
+    # reset_pct set to 78-84: MAX(tool_wear) > 75 (Warning) but < 90 (not Critical).
+    # Vibration ≤ 3.8 mm/s and no temp elevation keeps MIN(health) ≥ 44 → not Critical.
+    "MCH-003": dict(reset_pct=82,  accrual=(5.0, 7.0),   anomaly_rate=0.060, temp_extra=3,  vib_range=(0.8, 3.5)),  # Fanuc Robodrill  — overdue PM, tool wear spikes
+    "MCH-006": dict(reset_pct=79,  accrual=(5.0, 7.0),   anomaly_rate=0.070, temp_extra=4,  vib_range=(1.0, 3.8)),  # Doosan DNM 5700  — 2017 vintage, wear-induced Warning
+
+    # ── Critical machine — severe neglect, needs immediate shutdown ──
+    # reset_pct=92 → MAX(tool_wear) = 92 > 90 → Critical (tool wear condition alone).
+    # vib_range starts at 4.5 → EVERY production reading has vib > 4.0 → -25 always.
+    # temp_extra=18 → temp range (63, 88°C) → regularly > 80°C → -20 penalty frequently.
+    # When all 4 penalties coincide: 100-30-25-20-10 = 15 < 40 → Critical (health score too).
+    "MCH-010": dict(reset_pct=92,  accrual=(5.5, 8.5),   anomaly_rate=0.220, temp_extra=18, vib_range=(4.5, 7.5)),  # Hydromat HT 45-12 — overdue, running hot & critical
+}
+_default_profile = dict(reset_pct=75, accrual=(0.12, 0.30), anomaly_rate=0.030, temp_extra=0, vib_range=(0.5, 2.5))
 
 sensor_rows = []
 for mch in active_machines:
     mch_id    = mch[0]
     mch_type  = mch[2]
     temp_max  = temp_limits.get(mch_type, default_temp)
-    tool_wear = 0.0  # accumulates across hours, resets on PM
+    profile   = MACHINE_PROFILES.get(mch_id, _default_profile)
+    tool_wear = 0.0  # accumulates across hours; resets to ~5% after PM
 
     for h in range(sensor_hours):
-        ts           = sensor_start + timedelta(hours=h)
-        hour_of_day  = ts.hour
+        ts            = sensor_start + timedelta(hours=h)
+        hour_of_day   = ts.hour
         is_production = 6 <= hour_of_day <= 22
 
         if not is_production:
@@ -300,26 +360,34 @@ for mch in active_machines:
                 anomaly_type        = None,
             ))
         else:
-            tool_wear   = min(tool_wear + rand_between(0.3, 0.8), 100.0)
-            temperature = rand_between(temp_max - 20, temp_max + 5)
-            vibration   = rand_between(0.5, 3.5)
+            # Accumulate tool wear; trigger PM (tool change) when threshold reached
+            tool_wear = min(tool_wear + rand_between(*profile["accrual"]), 100.0)
+            if tool_wear >= profile["reset_pct"]:
+                tool_wear = rand_between(3.0, 8.0)   # residual after tool change
+
+            # Normal operating values — use profile-specific temp offset and vib range
+            temp_lo   = temp_max - 20 + profile["temp_extra"]
+            temp_hi   = temp_max +  5 + profile["temp_extra"]
+            temperature = rand_between(temp_lo, temp_hi)
+            vibration   = rand_between(*profile["vib_range"])
             spindle     = rand_between(800, 3500)
             power       = rand_between(10, 45)
             coolant     = rand_between(8, 20)
 
-            # Inject anomalies ~5% of time
+            # Inject anomalies at machine-specific rate
             anomaly_flag = False
             anomaly_type = None
-            if random.random() < 0.05:
+            if random.random() < profile["anomaly_rate"]:
                 anomaly_flag = True
                 anomaly_type = random.choice([
                     "High Temperature", "Excessive Vibration",
                     "High Tool Wear",   "Low Coolant Flow"
                 ])
                 if anomaly_type == "High Temperature":
-                    temperature = rand_between(temp_max + 5, temp_max + 20)
+                    temperature = rand_between(temp_max + 5 + profile["temp_extra"],
+                                               temp_max + 20 + profile["temp_extra"])
                 elif anomaly_type == "Excessive Vibration":
-                    vibration   = rand_between(4.0, 8.0)
+                    vibration   = rand_between(4.0, max(5.0, profile["vib_range"][1]))
                 elif anomaly_type == "High Tool Wear":
                     tool_wear   = min(float(tool_wear) + rand_between(5, 15), 100.0)
                 elif anomaly_type == "Low Coolant Flow":
