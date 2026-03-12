@@ -76,9 +76,12 @@ def _style_fig(fig):
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font_color=C["text"],
+        font_family="Inter, -apple-system, BlinkMacSystemFont, sans-serif",
         margin=dict(l=40, r=20, t=30, b=40),
-        xaxis=dict(gridcolor=C["border"], tickfont_color=C["muted"]),
-        yaxis=dict(gridcolor=C["border"], tickfont_color=C["muted"]),
+        xaxis=dict(gridcolor="#e2e8f0", linecolor="#e2e8f0",
+                   tickfont=dict(color=C["muted"], size=11)),
+        yaxis=dict(gridcolor="#e2e8f0", linecolor="#e2e8f0",
+                   tickfont=dict(color=C["muted"], size=11)),
     )
 
 

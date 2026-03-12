@@ -9,7 +9,7 @@ from backend.data import Backend
 
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.DARKLY, dbc.icons.BOOTSTRAP],
+    external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP],
     suppress_callback_exceptions=True,
     title="SmartMFG Shop Floor",
 )

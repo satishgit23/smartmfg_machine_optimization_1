@@ -89,12 +89,13 @@ def _machine_card(row):
     part_chips = [
         html.Span(p.strip(), style={
             "display":         "inline-block",
-            "backgroundColor": C["border"],
+            "backgroundColor": "#f0fdf4",
             "borderRadius":    "4px",
-            "padding":         "1px 6px",
+            "padding":         "1px 7px",
             "margin":          "1px 2px",
             "fontSize":        "0.7rem",
-            "color":           C["text"],
+            "color":           "#15803d",
+            "border":          "1px solid #bbf7d0",
         })
         for p in parts_raw.split(",") if p.strip()
     ]
@@ -120,11 +121,11 @@ def _machine_card(row):
                      style={"color": C["text"]}),
             html.Div([
                 html.Span(row["machine_type"], className="badge me-2",
-                          style={"backgroundColor": C["border"], "color": C["muted"],
-                                 "fontSize": "0.65rem"}),
+                          style={"backgroundColor": "#f1f5f9", "color": C["muted"],
+                                 "fontSize": "0.65rem", "border": "1px solid #e2e8f0"}),
                 html.Span(row["work_center"],  className="badge",
-                          style={"backgroundColor": C["border"], "color": C["blue"],
-                                 "fontSize": "0.65rem"}),
+                          style={"backgroundColor": "#eff6ff", "color": C["blue"],
+                                 "fontSize": "0.65rem", "border": "1px solid #dbeafe"}),
             ], className="mb-3"),
 
             html.Hr(style={"borderColor": C["border"], "margin": "0.5rem 0"}),

@@ -68,8 +68,9 @@ def layout():
                             html.Div(id="mi-reassign-result", className="mt-2"),
                         ], style={
                             **CARD_STYLE,
-                            "height": "100%",
-                            "borderLeft": f"3px solid {C['amber']}",
+                            "height":      "100%",
+                            "borderLeft":  f"4px solid {C['amber']}",
+                            "backgroundColor": "#fffbeb",
                         }),
                     ],
                 ),
@@ -351,7 +352,9 @@ def _sensor_cell(label, value, color, icon):
             html.Div(label,
                      style={"color": C["muted"], "fontSize": "0.68rem"}),
         ], className="text-center p-2",
-           style={"backgroundColor": C["border"], "borderRadius": "6px"}),
+           style={"backgroundColor": "#f8fafc",
+                  "border": "1px solid #e2e8f0",
+                  "borderRadius": "8px"}),
         width="auto", className="text-center",
     )
 
@@ -391,8 +394,9 @@ def _build_alt_machine_list(df):
                     ]),
                 ], className="p-2 d-flex align-items-start gap-2"),
             ], className="mb-2",
-               style={"backgroundColor": C["border"],
-                      "border": f"1px solid {C['border']}",
-                      "cursor": "pointer"}),
+               style={"backgroundColor": "#f8fafc",
+                      "border": "1px solid #e2e8f0",
+                      "cursor": "pointer",
+                      "borderRadius": "6px"}),
         )
     return items

@@ -31,22 +31,30 @@ import pages.machine_inspector # noqa: F401
 _navbar = dbc.Navbar(
     dbc.Container([
         html.Div([
-            html.I(className="bi bi-gear-wide-connected me-2 fs-5",
-                   style={"color": C["blue"]}),
-            dbc.NavbarBrand("SmartMFG", className="fw-bold mb-0 me-1"),
+            html.Div(
+                html.I(className="bi bi-gear-wide-connected fs-5",
+                       style={"color": "#93c5fd"}),
+                style={"width": "36px", "height": "36px", "borderRadius": "8px",
+                       "backgroundColor": "rgba(255,255,255,0.12)",
+                       "display": "flex", "alignItems": "center", "justifyContent": "center",
+                       "marginRight": "10px"},
+            ),
+            dbc.NavbarBrand("SmartMFG", className="fw-bold mb-0 me-1",
+                            style={"color": "#f8fafc"}),
             html.Span("Shop Floor Command Center",
                       className="d-none d-md-inline small",
-                      style={"color": C["muted"]}),
+                      style={"color": "#94a3b8"}),
         ], className="d-flex align-items-center"),
         html.Div([
-            dbc.Badge("Live", id="nav-refresh-badge", color="secondary",
-                      className="me-3 px-2 py-1"),
-            html.Span(id="nav-clock", className="small me-3",
-                      style={"color": C["muted"]}),
+            dbc.Badge("● Live", id="nav-refresh-badge", color="success",
+                      className="me-3 px-2 py-1", style={"fontSize": "0.72rem"}),
+            html.Span(id="nav-clock", className="small me-3 fw-medium",
+                      style={"color": "#94a3b8", "fontVariantNumeric": "tabular-nums"}),
         ], className="d-flex align-items-center"),
     ], fluid=True),
     color="dark", dark=True,
-    style={"borderBottom": f"1px solid {C['border']}", "backgroundColor": C["card"]},
+    style={"backgroundColor": C["nav"],
+           "borderBottom": "1px solid rgba(255,255,255,0.08)"},
 )
 
 _tabs = dbc.Tabs(
@@ -68,7 +76,8 @@ _tabs = dbc.Tabs(
     ],
     style={"backgroundColor": C["card"],
            "borderBottom": f"1px solid {C['border']}",
-           "paddingLeft": "1.5rem"},
+           "paddingLeft": "1.5rem",
+           "boxShadow": "0 1px 3px rgba(0,0,0,0.06)"},
 )
 
 # 3 ── Layout ────────────────────────────────────────────────────────────────
@@ -88,15 +97,15 @@ app.layout = html.Div([
                  children=pages.machine_inspector.layout(),
                  style={"display": "none"}),
     ], style={
-        "backgroundColor":  C["bg"],
-        "minHeight":        "calc(100vh - 100px)",
-        "padding":          "1.5rem 2rem",
+        "backgroundColor": C["bg"],
+        "minHeight":       "calc(100vh - 100px)",
+        "padding":         "1.5rem 2rem",
     }),
 
     # Global timers
     dcc.Interval(id="refresh-interval", interval=5 * 60 * 1000, n_intervals=0),
     dcc.Interval(id="clock-interval",   interval=1_000,          n_intervals=0),
-], style={"backgroundColor": C["bg"]})
+], style={"backgroundColor": C["bg"], "minHeight": "100vh"})
 
 
 # ── Global callbacks ────────────────────────────────────────────────────────
