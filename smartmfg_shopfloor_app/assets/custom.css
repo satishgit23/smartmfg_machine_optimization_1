@@ -6,27 +6,46 @@ body {
   color: #0f172a;
 }
 
-/* ── Tabs ──────────────────────────────────────────────────────────────── */
-.nav-tabs .nav-link {
-  color: #3b82f6 !important;   /* blue-500 — clearly visible on white */
-  border: none;
-  padding: 0.65rem 1.25rem;
-  font-weight: 500;
+/* ── Tabs — high-specificity overrides to beat FLATLY theme ────────────── */
+#page-tabs ul.nav.nav-tabs,
+ul.nav.nav-tabs {
+  border-bottom: 2px solid #e2e8f0;
+  background-color: #ffffff;
 }
-.nav-tabs .nav-link:hover {
-  color: #1d4ed8 !important;   /* blue-700 on hover */
-  background: #eff6ff;
-  border: none;
-  border-radius: 6px 6px 0 0;
+
+/* Inactive tab */
+#page-tabs ul.nav.nav-tabs .nav-item .nav-link,
+#page-tabs ul.nav.nav-tabs a.nav-link,
+ul.nav.nav-tabs .nav-item .nav-link {
+  color: #000000 !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-bottom: 3px solid transparent !important;
+  padding: 0.7rem 1.4rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  border-radius: 0 !important;
 }
-.nav-tabs .nav-link.active {
-  background: #f1f5f9 !important;
-  color: #1d4ed8 !important;   /* blue-700 — darkest for active */
+
+/* Inactive tab hover */
+#page-tabs ul.nav.nav-tabs .nav-item .nav-link:hover,
+#page-tabs ul.nav.nav-tabs a.nav-link:hover,
+ul.nav.nav-tabs .nav-item .nav-link:hover {
+  color: #2563eb !important;
+  background-color: #eff6ff !important;
+  border-bottom: 3px solid #93c5fd !important;
+}
+
+/* Active tab */
+#page-tabs ul.nav.nav-tabs .nav-item .nav-link.active,
+#page-tabs ul.nav.nav-tabs a.nav-link.active,
+ul.nav.nav-tabs .nav-item .nav-link.active {
+  color: #2563eb !important;
+  background-color: #ffffff !important;
   border: none !important;
   border-bottom: 3px solid #2563eb !important;
   font-weight: 700;
 }
-.nav-tabs { border-bottom: 1px solid #e2e8f0; }
 
 /* ── Navbar ────────────────────────────────────────────────────────────── */
 .navbar { box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
