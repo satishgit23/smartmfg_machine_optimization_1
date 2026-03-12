@@ -76,9 +76,14 @@ class Backend:
               WHERE period_month = (SELECT MAX(period_month) FROM {FQN}.gold_machine_utilization)
             ) util
             CROSS JOIN (
-              SELECT AVG(on_time_delivery_pct) AS avg_otd
-              FROM {FQN}.gold_scheduling_performance
-              WHERE period_month = (SELECT MAX(period_month) FROM {FQN}.gold_scheduling_performance)
+              -- True weighted OTD: on-time completions / total completions
+              -- Avoids per-group average distortion when the latest month has few orders
+              SELECT ROUND(
+                SUM(CASE WHEN is_late = FALSE THEN 1.0 ELSE 0 END) * 100
+                / NULLIF(COUNT(*), 0), 1
+              ) AS avg_otd
+              FROM {FQN}.silver_work_orders
+              WHERE status = 'Complete'
             ) otd
             CROSS JOIN (
               SELECT

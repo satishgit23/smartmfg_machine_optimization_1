@@ -43,7 +43,7 @@ _navbar = dbc.Navbar(
                             style={"color": "#f8fafc"}),
             html.Span("Shop Floor Command Center",
                       className="d-none d-md-inline small",
-                      style={"color": "#94a3b8"}),
+                      style={"color": "#ffffff"}),
         ], className="d-flex align-items-center"),
         html.Div([
             dbc.Badge("● Live", id="nav-refresh-badge", color="success",
