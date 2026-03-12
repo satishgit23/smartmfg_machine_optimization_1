@@ -180,19 +180,29 @@ wo_rows = []
 start_date = date(2024, 1, 1)
 
 # ── Lateness probability by work center ────────────────────────────────────
-# Reflects machine health: Warning/Critical machines cause more late orders.
-# WC-TRANSFER (MCH-010 Critical) has the worst on-time record.
-# WC-QC and WC-MULTITASK are most reliable.
-# Base probability = fraction of completed orders that finish AFTER their due date.
+# Tuned so the average on_time_delivery_pct across all (work_center × priority)
+# groups in the latest period lands at ~96.1%.
+#
+# The KPI query averages on_time_delivery_pct across 18 rows (6 WC × 3 priorities).
+# Target per-WC average:
+#   WC-QC        ~99%  (CMM inspection, highly controlled)
+#   WC-MULTITASK ~98%  (high-value, tight scheduling)
+#   WC-MILL      ~97%  (well-maintained mills)
+#   WC-TURN      ~96%  (reliable lathes)
+#   WC-DRILL     ~95%  (Fanuc Warning — slightly elevated)
+#   WC-TRANSFER  ~94%  (Hydromat Critical — worst but not catastrophic)
+# Grand avg = (99+98+97+96+95+94) / 6 ≈ 96.5% → rounds to 96.1-96.5% with variance
+#
+# Base probability = P(a completed order finishes after its due date)
 WC_LATE_PROB = {
-    "WC-MILL":      0.10,   # ~90% OTD — mostly well-maintained mills
-    "WC-TURN":      0.12,   # ~88% OTD — reliable but some aging lathes
-    "WC-DRILL":     0.20,   # ~80% OTD — Fanuc overdue PM (MCH-003 Warning)
-    "WC-MULTITASK": 0.07,   # ~93% OTD — high-value machine, tight scheduling
-    "WC-TRANSFER":  0.38,   # ~62% OTD — Hydromat Critical (MCH-010)
-    "WC-QC":        0.05,   # ~95% OTD — CMM inspection, well-controlled
+    "WC-MILL":      0.030,  # ~97% OTD
+    "WC-TURN":      0.040,  # ~96% OTD
+    "WC-DRILL":     0.050,  # ~95% OTD — Fanuc Warning
+    "WC-MULTITASK": 0.020,  # ~98% OTD
+    "WC-TRANSFER":  0.065,  # ~94% OTD — Hydromat Critical (most late orders)
+    "WC-QC":        0.010,  # ~99% OTD — CMM, highly controlled
 }
-# Priority multiplier: High-priority orders get more scheduling attention
+# Priority multiplier: High-priority orders receive expedited scheduling attention
 PRIORITY_LATE_MULT = {"High": 0.45, "Medium": 1.0, "Low": 1.75}
 
 for i in range(1, 401):
