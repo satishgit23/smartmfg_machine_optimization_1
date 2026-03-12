@@ -179,6 +179,22 @@ statuses        = ["Complete", "Complete", "Complete", "In Progress", "Open", "F
 wo_rows = []
 start_date = date(2024, 1, 1)
 
+# ── Lateness probability by work center ────────────────────────────────────
+# Reflects machine health: Warning/Critical machines cause more late orders.
+# WC-TRANSFER (MCH-010 Critical) has the worst on-time record.
+# WC-QC and WC-MULTITASK are most reliable.
+# Base probability = fraction of completed orders that finish AFTER their due date.
+WC_LATE_PROB = {
+    "WC-MILL":      0.10,   # ~90% OTD — mostly well-maintained mills
+    "WC-TURN":      0.12,   # ~88% OTD — reliable but some aging lathes
+    "WC-DRILL":     0.20,   # ~80% OTD — Fanuc overdue PM (MCH-003 Warning)
+    "WC-MULTITASK": 0.07,   # ~93% OTD — high-value machine, tight scheduling
+    "WC-TRANSFER":  0.38,   # ~62% OTD — Hydromat Critical (MCH-010)
+    "WC-QC":        0.05,   # ~95% OTD — CMM inspection, well-controlled
+}
+# Priority multiplier: High-priority orders get more scheduling attention
+PRIORITY_LATE_MULT = {"High": 0.45, "Medium": 1.0, "Low": 1.75}
+
 for i in range(1, 401):
     part_no, part_desc, wc, machine_id = random.choice(parts)
     op_code, op_desc, setup_hrs, run_hrs_unit = random.choice(ops)
@@ -187,6 +203,7 @@ for i in range(1, 401):
     sched_start = due_dt - timedelta(days=random.randint(3, 14))
     sched_end   = sched_start + timedelta(hours=round(setup_hrs + run_hrs_unit * order_qty, 1))
     status      = random.choice(statuses)
+    priority    = random.choice(["High", "Medium", "Low"])
 
     actual_start = actual_end = None
     actual_hrs   = None
@@ -197,7 +214,22 @@ for i in range(1, 401):
         offset       = random.randint(-1, 2)
         actual_start = sched_start + timedelta(days=offset)
         if status == "Complete":
-            actual_end = actual_start + timedelta(hours=round((setup_hrs + run_hrs_unit * order_qty) * rand_between(0.9, 1.3), 1))
+            # Determine whether this order is late based on work center + priority
+            base_prob    = WC_LATE_PROB.get(wc, 0.12)
+            late_prob    = min(base_prob * PRIORITY_LATE_MULT[priority], 0.85)
+            is_late_flag = random.random() < late_prob
+
+            if is_late_flag:
+                # Late: actual_end is 1–8 days after the due date (date object, consistent with rest of code)
+                actual_end = due_dt + timedelta(days=random.randint(1, 8))
+            else:
+                # On-time: job finishes before the due date
+                # Note: date + timedelta(hours=...) in Python keeps only the date (days component),
+                # ensuring actual_end_date <= actual_start_date < due_date
+                actual_end = actual_start + timedelta(
+                    hours=round((setup_hrs + run_hrs_unit * order_qty) * rand_between(0.9, 1.15), 1)
+                )
+
             actual_hrs = round((actual_end - actual_start).total_seconds() / 3600, 2)
 
     if status == "Farm-Out":
@@ -223,7 +255,7 @@ for i in range(1, 401):
         run_time_hrs_per_unit = run_hrs_unit,
         actual_total_hrs = actual_hrs,
         status           = status,
-        priority         = random.choice(["High", "Medium", "Low"]),
+        priority         = priority,
         farm_out_vendor  = farm_vendor,
         farm_out_cost_usd= farm_cost,
         source_system    = "Oracle ERP",
