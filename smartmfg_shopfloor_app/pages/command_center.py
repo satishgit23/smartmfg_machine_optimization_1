@@ -5,12 +5,16 @@ KPI cards, utilization bar chart, maintenance donut, OTD trend,
 farm-out cost by vendor, and work-centre capacity gauge.
 
 Machine filter: clicking a bar in the Utilization chart scopes all KPI
-cards to that machine. A persistent Clear Filter button (or clicking the
-same bar again) resets back to fleet-wide view.
+cards to that machine. The Clear Filter button (or clicking the same bar
+again) resets back to fleet-wide view.
+
+A single combined callback handles both machine selection logic and all
+rendering, so there are no race conditions between separate callbacks.
+The dcc.Store persists the selection across interval refreshes.
 """
 
 import pandas as pd
-from dash import html, dcc, Input, Output, State, callback, ctx
+from dash import html, dcc, Input, Output, State, callback, ctx, no_update
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
@@ -24,8 +28,10 @@ def layout():
     return html.Div([
         page_title("Command Centre", "Live operational overview — auto-refreshes every 5 minutes"),
 
-        # Machine selection state + filter banner
+        # Persists selected machine across interval refreshes
         dcc.Store(id="cc-machine-sel", data=None),
+
+        # Filter banner row
         html.Div([
             html.Div(id="cc-filter-badge"),
             html.Button(
@@ -45,7 +51,7 @@ def layout():
                 html.Div([
                     section_header("Machine Utilization by Asset", "bi-cpu"),
                     html.Small(
-                        "Click a bar to filter KPIs by machine · click again to clear",
+                        "Click a bar to filter KPIs by machine · click again or Clear to reset",
                         className="d-block text-muted mb-2",
                         style={"fontSize": "0.75rem"},
                     ),
@@ -119,50 +125,55 @@ def _status_color(status: str) -> str:
     )
 
 
-# ── Callback 1 — track selected machine ────────────────────────────────────
-
-@callback(
-    Output("cc-machine-sel", "data"),
-    Input("cc-util-chart",       "clickData"),
-    Input("cc-clear-filter-btn", "n_clicks"),
-    State("cc-machine-sel",      "data"),
-    prevent_initial_call=True,
-)
-def update_machine_selection(click_data, _clear_n, current_sel):
-    if ctx.triggered_id == "cc-clear-filter-btn":
-        return None
-    if click_data:
-        pt         = click_data["points"][0]
-        machine_id = pt.get("customdata")
-        # Toggle: clicking the already-selected machine clears the filter
-        if current_sel and current_sel.get("machine_id") == machine_id:
-            return None
-        return {"machine_name": pt["x"], "machine_id": machine_id}
-    return current_sel
-
-
-# ── Callback 2 — render KPIs + all charts ──────────────────────────────────
+# ── Single combined callback ────────────────────────────────────────────────
+#
+# Handles both machine selection logic and all chart/KPI rendering in one
+# callback to avoid race conditions between multiple callbacks. The Store
+# is both a State (read before render) and an Output (written after render)
+# so the selection persists across automatic interval refreshes.
 
 @callback(
     Output("cc-kpi-row",           "children"),
     Output("cc-filter-badge",      "children"),
     Output("cc-clear-filter-btn",  "style"),
+    Output("cc-machine-sel",       "data"),
     Output("cc-util-chart",        "figure"),
     Output("cc-maint-donut",       "figure"),
     Output("cc-otd-chart",         "figure"),
     Output("cc-farmout-chart",     "figure"),
     Output("cc-capacity-chart",    "figure"),
     Input("refresh-interval",      "n_intervals"),
-    Input("cc-machine-sel",        "data"),
+    Input("cc-util-chart",         "clickData"),
+    Input("cc-clear-filter-btn",   "n_clicks"),
+    State("cc-machine-sel",        "data"),
 )
-def refresh_command_centre(_, machine_sel):
+def refresh_command_centre(_interval, click_data, _clear_n, machine_sel_state):
+    triggered = ctx.triggered_id or "refresh-interval"
+
+    # ── Determine selection state ─────────────────────────────────────────
+    if triggered == "cc-clear-filter-btn":
+        machine_sel = None
+
+    elif triggered == "cc-util-chart" and click_data:
+        pt         = click_data["points"][0]
+        machine_id = pt.get("customdata")
+        machine_nm = pt.get("x", "")
+        # Toggle: clicking the currently selected machine clears the filter
+        if machine_sel_state and machine_sel_state.get("machine_id") == machine_id:
+            machine_sel = None
+        else:
+            machine_sel = {"machine_name": machine_nm, "machine_id": machine_id}
+
+    else:
+        # Interval tick or initial load — preserve existing selection
+        machine_sel = machine_sel_state
+
     machine_id   = machine_sel.get("machine_id")   if machine_sel else None
     machine_name = machine_sel.get("machine_name") if machine_sel else None
 
     # ── KPI row ───────────────────────────────────────────────────────────
     if machine_id:
-        # ---- Machine-scoped KPIs ----------------------------------------
-        mk = backend.get_machine_kpis(machine_id)
+        mk      = backend.get_machine_kpis(machine_id)
         urgency = mk.get("maintenance_urgency", "Unknown")
         health  = mk.get("health_score", 0)
         status  = mk.get("machine_status", "—")
@@ -171,12 +182,11 @@ def refresh_command_centre(_, machine_sel):
         orders  = int(mk.get("orders_in_progress", 0))
         fo_cost = mk.get("wc_farmout_cost", 0) or 0
         wc      = mk.get("work_center", "—")
-
         otd_str = f"{otd}%" if otd is not None else "—"
 
         kpi_row = [
             kpi_card("Machine",          mk.get("machine_name", machine_name),
-                     f"{mk.get('machine_type','—')} · {wc}",
+                     f"{mk.get('machine_type', '—')} · {wc}",
                      "bi-cpu-fill",        _status_color(status)),
             kpi_card("Utilization",      f"{util}%",
                      "this machine (all time)",
@@ -190,7 +200,7 @@ def refresh_command_centre(_, machine_sel):
             kpi_card("Maint. Urgency",  urgency,
                      f"health score: {health}",
                      "bi-bell-fill",       _urgency_color(urgency)),
-            kpi_card("Orders In Prog.",  f"{orders}",
+            kpi_card("Orders In Prog.", f"{orders}",
                      "open + in progress",
                      "bi-list-task",       C["purple"]),
         ]
@@ -199,14 +209,16 @@ def refresh_command_centre(_, machine_sel):
             html.I(className="bi bi-funnel-fill me-2",
                    style={"color": C["blue"]}),
             html.Span("Filtered: ", style={"fontWeight": "600", "color": C["text"]}),
-            html.Span(machine_name,  style={"fontWeight": "700", "color": C["blue"]}),
-            html.Span(" — KPIs show this machine only · click the bar again to clear",
-                      style={"color": C["muted"], "fontSize": "0.78rem", "marginLeft": "6px"}),
+            html.Span(machine_name or machine_id,
+                      style={"fontWeight": "700", "color": C["blue"]}),
+            html.Span(
+                " — KPIs show this machine only · click same bar again or Clear to reset",
+                style={"color": C["muted"], "fontSize": "0.78rem", "marginLeft": "6px"},
+            ),
         ]
         clear_btn_style = {"display": "inline-flex", "alignItems": "center"}
 
     else:
-        # ---- Fleet-wide KPIs --------------------------------------------
         mc   = backend.get_machine_status_counts()
         kpis = backend.get_performance_kpis()
 
@@ -246,7 +258,7 @@ def refresh_command_centre(_, machine_sel):
         clear_btn_style = {"display": "none"}
 
     # ── Utilization bar — highlight selected machine ───────────────────────
-    util_df = backend.get_utilization_by_machine()
+    util_df  = backend.get_utilization_by_machine()
     fig_util = go.Figure()
     if not util_df.empty:
         wcs = util_df["work_center"].unique().tolist()
@@ -261,24 +273,26 @@ def refresh_command_centre(_, machine_sel):
                              for mid in sub["machine_id"]]
             else:
                 colors    = [base_clr] * len(sub)
-                opacities = [1.0] * len(sub)
+                opacities = [1.0]      * len(sub)
 
             fig_util.add_trace(go.Bar(
                 name=wc_name,
                 x=sub["machine_name"],
                 y=sub["avg_utilization_pct"],
-                customdata=sub["machine_id"],
+                customdata=list(sub["machine_id"]),
                 marker=dict(color=colors, opacity=opacities),
                 hovertemplate="<b>%{x}</b><br>Utilization: %{y:.1f}%<extra></extra>",
             ))
+
         fig_util.add_hline(y=80, line_dash="dot", line_color=C["amber"],
                            annotation_text="Target 80%",
                            annotation_font_color=C["amber"])
     _style_fig(fig_util)
     fig_util.update_layout(
-        barmode="group", showlegend=True,
+        barmode="group",
+        showlegend=True,
         legend=dict(orientation="h", y=-0.25, font_color=C["muted"]),
-        clickmode="event",
+        clickmode="event+select",
     )
     fig_util.update_yaxes(range=[0, 110], ticksuffix="%")
 
@@ -289,7 +303,7 @@ def refresh_command_centre(_, machine_sel):
         if not maint_df.empty
         else pd.DataFrame({"maintenance_urgency": [], "count": []})
     )
-    clr_map = {"Critical": C["red"], "Warning": C["amber"], "Normal": C["green"]}
+    clr_map   = {"Critical": C["red"], "Warning": C["amber"], "Normal": C["green"]}
     fig_donut = go.Figure(go.Pie(
         labels=urg["maintenance_urgency"],
         values=urg["count"],
@@ -382,5 +396,7 @@ def refresh_command_centre(_, machine_sel):
     _style_fig(fig_cap)
     fig_cap.update_yaxes(range=[0, 115], ticksuffix="%")
 
-    return (kpi_row, filter_badge, clear_btn_style,
-            fig_util, fig_donut, fig_otd, fig_fo, fig_cap)
+    return (
+        kpi_row, filter_badge, clear_btn_style, machine_sel,
+        fig_util, fig_donut, fig_otd, fig_fo, fig_cap,
+    )
