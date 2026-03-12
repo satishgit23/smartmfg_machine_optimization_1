@@ -1,0 +1,52 @@
+/* SmartMFG Shop Floor App — custom overrides */
+
+body {
+  background-color: #0d1117 !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Tabs */
+.nav-tabs .nav-link          { color: #7d8590; border: none; padding: 0.65rem 1.25rem; }
+.nav-tabs .nav-link:hover    { color: #e6edf3; background: rgba(255,255,255,0.04); border: none; }
+.nav-tabs .nav-link.active   { background: #0d1117 !important; border: none;
+                                border-bottom: 2px solid #58a6ff !important; }
+.nav-tabs                    { border-bottom: 1px solid #21262d; }
+
+/* Dropdown (Dash) */
+.Select-control              { background-color: #161b22 !important;
+                                border: 1px solid #30363d !important; color: #e6edf3; }
+.Select-menu-outer           { background-color: #161b22 !important; border: 1px solid #30363d !important; }
+.Select-option               { background-color: #161b22 !important; color: #e6edf3 !important; }
+.Select-option:hover         { background-color: #21262d !important; }
+.Select-value-label          { color: #e6edf3 !important; }
+.Select-placeholder          { color: #7d8590 !important; }
+.Select-arrow-zone svg       { fill: #7d8590; }
+.VirtualizedSelectOption     { color: #e6edf3 !important; background: #161b22 !important; }
+.VirtualizedSelectFocusedOption { background: #21262d !important; }
+
+/* DataTable */
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner td,
+.dash-table-container .dash-spreadsheet-container .dash-spreadsheet-inner th {
+  font-size: 0.82rem;
+}
+.dash-filter input { background: #21262d !important; color: #e6edf3 !important;
+                     border: 1px solid #30363d !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar            { width: 6px; height: 6px; }
+::-webkit-scrollbar-track      { background: #0d1117; }
+::-webkit-scrollbar-thumb      { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover{ background: #484f58; }
+
+/* Buttons */
+.btn { border-radius: 6px; font-size: 0.82rem; }
+.btn-outline-success:hover { background-color: rgba(63,185,80,0.15) !important; }
+.btn-outline-danger:hover  { background-color: rgba(248,81,73,0.15) !important; }
+.btn-outline-warning:hover { background-color: rgba(210,153,34,0.15) !important; }
+
+/* Card hover */
+.machine-card:hover { transform: translateY(-2px); transition: transform 0.15s ease; }
+
+/* Radio buttons in reassignment panel */
+.form-check-input:checked { background-color: #58a6ff !important;
+                             border-color: #58a6ff !important; }
