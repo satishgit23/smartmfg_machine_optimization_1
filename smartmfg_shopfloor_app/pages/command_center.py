@@ -128,6 +128,33 @@ def _status_color(status: str) -> str:
     )
 
 
+def _metric_tile(label, value, subtitle, icon, accent):
+    """Compact self-contained metric tile — uses flex layout, no Bootstrap cols."""
+    return html.Div([
+        html.Div([
+            html.I(className=f"{icon} me-1",
+                   style={"color": accent, "fontSize": "0.85rem"}),
+            html.Span(label,
+                      style={"color": "#64748b", "fontSize": "0.7rem",
+                             "fontWeight": "600", "textTransform": "uppercase",
+                             "letterSpacing": "0.04em"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
+        html.Div(str(value),
+                 style={"fontSize": "1.5rem", "fontWeight": "700",
+                        "color": "#1e293b", "lineHeight": "1.1"}),
+        html.Div(subtitle,
+                 style={"color": "#94a3b8", "fontSize": "0.7rem", "marginTop": "3px"}),
+    ], style={
+        "backgroundColor": "#ffffff",
+        "border":          "1px solid #dbeafe",
+        "borderTop":       f"3px solid {accent}",
+        "borderRadius":    "8px",
+        "padding":         "0.8rem 1rem",
+        "flex":            "1",
+        "minWidth":        "160px",
+    })
+
+
 # ── Single combined callback ────────────────────────────────────────────────
 #
 # Handles both machine selection logic and all chart/KPI rendering in one
@@ -204,7 +231,11 @@ def refresh_command_centre(_interval, click_data, _clear_n, machine_sel_state):
 
     # ── Machine-specific KPI row (shown only when a bar is selected) ──────
     if machine_id:
-        mk      = backend.get_machine_kpis(machine_id)
+        try:
+            mk = backend.get_machine_kpis(machine_id)
+        except Exception:
+            mk = {}
+
         m_util  = mk.get("avg_utilization_pct", "—")
         m_otd   = mk.get("avg_otd_pct")
         m_otd_s = f"{m_otd}%" if m_otd is not None else "—"
@@ -214,60 +245,61 @@ def refresh_command_centre(_interval, click_data, _clear_n, machine_sel_state):
         disp_nm = mk.get("machine_name") or machine_name or machine_id
 
         machine_kpi_row = html.Div([
-            # Header strip
+            # Header label
             html.Div([
                 html.I(className="bi bi-cpu-fill me-2",
-                       style={"color": C["blue"], "fontSize": "0.85rem"}),
-                html.Span(f"{disp_nm}",
-                          style={"fontWeight": "700", "color": C["blue"],
+                       style={"color": "#2563eb", "fontSize": "0.85rem"}),
+                html.Span(str(disp_nm),
+                          style={"fontWeight": "700", "color": "#2563eb",
                                  "fontSize": "0.85rem"}),
-                html.Span(" — machine-level breakdown",
-                          style={"color": C["muted"], "fontSize": "0.78rem",
+                html.Span(" — machine-level KPIs",
+                          style={"color": "#64748b", "fontSize": "0.78rem",
                                  "marginLeft": "4px"}),
-            ], className="mb-2 d-flex align-items-center"),
+            ], style={"marginBottom": "10px", "display": "flex",
+                      "alignItems": "center"}),
 
-            # Four comparison cards
+            # Four metric tiles in a flex row
             html.Div([
-                kpi_card("Avg Utilization",    f"{m_util}%",
-                         f"{disp_nm} (all time)",
-                         "bi-speedometer2",    C["blue"]),
-                kpi_card("On-Time Delivery",   m_otd_s,
-                         f"{disp_nm} completed orders",
-                         "bi-calendar2-check", C["cyan"]),
-                kpi_card("Farm-Out Cost",      f"${m_fo:,.0f}",
-                         f"{m_wc} work center total",
-                         "bi-truck",           C["amber"]),
-                kpi_card("Orders In Progress", f"{m_ord}",
-                         f"{disp_nm} active orders",
-                         "bi-list-task",       C["purple"]),
-            ], className="row g-3"),
+                _metric_tile("Avg Utilization",    f"{m_util}%",
+                             f"{disp_nm} · all time",
+                             "bi-speedometer2",    "#3b82f6"),
+                _metric_tile("On-Time Delivery",   m_otd_s,
+                             "completed work orders",
+                             "bi-calendar2-check", "#06b6d4"),
+                _metric_tile("Farm-Out Cost YTD",  f"${m_fo:,.0f}",
+                             f"{m_wc} work center",
+                             "bi-truck",           "#f59e0b"),
+                _metric_tile("Orders In Progress", str(m_ord),
+                             "open + in progress",
+                             "bi-list-task",       "#8b5cf6"),
+            ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
         ], style={
             "backgroundColor": "#eff6ff",
             "border":          "1px solid #bfdbfe",
             "borderRadius":    "10px",
-            "padding":         "0.85rem 1rem",
+            "padding":         "1rem 1.1rem",
             "marginBottom":    "0.75rem",
         })
 
         filter_badge = [
             html.I(className="bi bi-funnel-fill me-2",
-                   style={"color": C["blue"]}),
-            html.Span("Viewing: ", style={"fontWeight": "600", "color": C["text"]}),
-            html.Span(disp_nm, style={"fontWeight": "700", "color": C["blue"]}),
+                   style={"color": "#2563eb"}),
+            html.Span("Viewing: ", style={"fontWeight": "600", "color": "#1e293b"}),
+            html.Span(str(disp_nm), style={"fontWeight": "700", "color": "#2563eb"}),
             html.Span(
                 " · click same bar again or Clear to reset",
-                style={"color": C["muted"], "fontSize": "0.78rem", "marginLeft": "6px"},
+                style={"color": "#64748b", "fontSize": "0.78rem", "marginLeft": "6px"},
             ),
         ]
         clear_btn_style = {"display": "inline-flex", "alignItems": "center"}
 
     else:
-        machine_kpi_row = None
+        machine_kpi_row = html.Span("")  # empty but valid — hides the panel
         filter_badge    = html.Span(
             [html.I(className="bi bi-bar-chart-fill me-2",
-                    style={"color": C["muted"]}),
+                    style={"color": "#94a3b8"}),
              "Click a bar in the utilization chart to see machine-level KPIs"],
-            style={"color": C["muted"], "fontSize": "0.78rem"},
+            style={"color": "#94a3b8", "fontSize": "0.78rem"},
         )
         clear_btn_style = {"display": "none"}
 

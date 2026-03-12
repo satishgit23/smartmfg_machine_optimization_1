@@ -5,3 +5,5 @@ command:
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql-warehouse
+
+idle_timeout_minutes: 10
