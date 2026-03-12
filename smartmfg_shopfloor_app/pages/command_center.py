@@ -3,10 +3,14 @@ pages/command_center.py — Command Centre layout and data callbacks.
 
 KPI cards, utilization bar chart, maintenance donut, OTD trend,
 farm-out cost by vendor, and work-centre capacity gauge.
+
+Machine filter: clicking a bar in the Utilization chart scopes all KPI
+cards to that machine. A persistent Clear Filter button (or clicking the
+same bar again) resets back to fleet-wide view.
 """
 
 import pandas as pd
-from dash import html, dcc, Input, Output, callback
+from dash import html, dcc, Input, Output, State, callback, ctx
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
@@ -20,6 +24,19 @@ def layout():
     return html.Div([
         page_title("Command Centre", "Live operational overview — auto-refreshes every 5 minutes"),
 
+        # Machine selection state + filter banner
+        dcc.Store(id="cc-machine-sel", data=None),
+        html.Div([
+            html.Div(id="cc-filter-badge"),
+            html.Button(
+                [html.I(className="bi bi-x-circle me-1"), "Clear Filter"],
+                id="cc-clear-filter-btn",
+                className="btn btn-sm btn-outline-secondary ms-2",
+                style={"display": "none"},
+                n_clicks=0,
+            ),
+        ], className="d-flex align-items-center mb-2"),
+
         # KPI row — populated by callback
         html.Div(id="cc-kpi-row", className="row g-3 mb-2"),
 
@@ -27,6 +44,11 @@ def layout():
             dbc.Col([
                 html.Div([
                     section_header("Machine Utilization by Asset", "bi-cpu"),
+                    html.Small(
+                        "Click a bar to filter KPIs by machine · click again to clear",
+                        className="d-block text-muted mb-2",
+                        style={"fontSize": "0.75rem"},
+                    ),
                     dcc.Graph(id="cc-util-chart", config={"displayModeBar": False},
                               style={"height": "320px"}),
                 ], style=CARD_STYLE),
@@ -69,7 +91,7 @@ def layout():
     ])
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _style_fig(fig):
     fig.update_layout(
@@ -85,67 +107,179 @@ def _style_fig(fig):
     )
 
 
-# ── Callbacks ──────────────────────────────────────────────────────────────
+def _urgency_color(urgency: str) -> str:
+    return {"Critical": C["red"], "Warning": C["amber"], "Normal": C["green"]}.get(
+        urgency, C["muted"]
+    )
+
+
+def _status_color(status: str) -> str:
+    return {"Active": C["green"], "Maintenance": C["red"], "Idle": C["amber"]}.get(
+        status, C["muted"]
+    )
+
+
+# ── Callback 1 — track selected machine ────────────────────────────────────
 
 @callback(
-    Output("cc-kpi-row",        "children"),
-    Output("cc-util-chart",     "figure"),
-    Output("cc-maint-donut",    "figure"),
-    Output("cc-otd-chart",      "figure"),
-    Output("cc-farmout-chart",  "figure"),
-    Output("cc-capacity-chart", "figure"),
-    Input("refresh-interval",   "n_intervals"),
+    Output("cc-machine-sel", "data"),
+    Input("cc-util-chart",       "clickData"),
+    Input("cc-clear-filter-btn", "n_clicks"),
+    State("cc-machine-sel",      "data"),
+    prevent_initial_call=True,
 )
-def refresh_command_centre(_):
-    # ── KPIs ──────────────────────────────────────────────────────────────
-    mc   = backend.get_machine_status_counts()
-    kpis = backend.get_performance_kpis()
+def update_machine_selection(click_data, _clear_n, current_sel):
+    if ctx.triggered_id == "cc-clear-filter-btn":
+        return None
+    if click_data:
+        pt         = click_data["points"][0]
+        machine_id = pt.get("customdata")
+        # Toggle: clicking the already-selected machine clears the filter
+        if current_sel and current_sel.get("machine_id") == machine_id:
+            return None
+        return {"machine_name": pt["x"], "machine_id": machine_id}
+    return current_sel
 
-    total  = int(mc.get("total", 0))
-    active = int(mc.get("active", 0))
-    maint  = int(mc.get("maintenance", 0))
-    idle   = int(mc.get("idle", 0))
-    util   = kpis.get("avg_utilization_pct", "—")
-    otd    = kpis.get("avg_otd_pct", "—")
-    cost   = kpis.get("ytd_farmout_cost", 0) or 0
-    prem   = kpis.get("avg_cost_premium_pct", "—")
-    crit   = int(kpis.get("critical_machines", 0))
-    warn   = int(kpis.get("warning_machines", 0))
-    orders = int(kpis.get("orders_in_progress", 0))
 
-    kpi_row = [
-        kpi_card("Active Machines",    f"{active}/{total}",
-                 f"{maint} down · {idle} idle",  "bi-cpu-fill",       C["green"]),
-        kpi_card("Avg Utilization",    f"{util}%",
-                 "latest period",               "bi-speedometer2",    C["blue"]),
-        kpi_card("On-Time Delivery",   f"{otd}%",
-                 "latest period",               "bi-calendar2-check", C["cyan"]),
-        kpi_card("Farm-Out Cost YTD",  f"${cost:,.0f}",
-                 f"+{prem}% vs in-house",        "bi-truck",           C["amber"]),
-        kpi_card("Maint. Alerts",      f"{crit} Critical",
-                 f"{warn} warnings",             "bi-bell-fill",       C["red"]),
-        kpi_card("Orders In Progress", f"{orders}",
-                 "open + in progress",           "bi-list-task",       C["purple"]),
-    ]
+# ── Callback 2 — render KPIs + all charts ──────────────────────────────────
 
-    # ── Utilization bar ────────────────────────────────────────────────────
+@callback(
+    Output("cc-kpi-row",           "children"),
+    Output("cc-filter-badge",      "children"),
+    Output("cc-clear-filter-btn",  "style"),
+    Output("cc-util-chart",        "figure"),
+    Output("cc-maint-donut",       "figure"),
+    Output("cc-otd-chart",         "figure"),
+    Output("cc-farmout-chart",     "figure"),
+    Output("cc-capacity-chart",    "figure"),
+    Input("refresh-interval",      "n_intervals"),
+    Input("cc-machine-sel",        "data"),
+)
+def refresh_command_centre(_, machine_sel):
+    machine_id   = machine_sel.get("machine_id")   if machine_sel else None
+    machine_name = machine_sel.get("machine_name") if machine_sel else None
+
+    # ── KPI row ───────────────────────────────────────────────────────────
+    if machine_id:
+        # ---- Machine-scoped KPIs ----------------------------------------
+        mk = backend.get_machine_kpis(machine_id)
+        urgency = mk.get("maintenance_urgency", "Unknown")
+        health  = mk.get("health_score", 0)
+        status  = mk.get("machine_status", "—")
+        util    = mk.get("avg_utilization_pct", "—")
+        otd     = mk.get("avg_otd_pct")
+        orders  = int(mk.get("orders_in_progress", 0))
+        fo_cost = mk.get("wc_farmout_cost", 0) or 0
+        wc      = mk.get("work_center", "—")
+
+        otd_str = f"{otd}%" if otd is not None else "—"
+
+        kpi_row = [
+            kpi_card("Machine",          mk.get("machine_name", machine_name),
+                     f"{mk.get('machine_type','—')} · {wc}",
+                     "bi-cpu-fill",        _status_color(status)),
+            kpi_card("Utilization",      f"{util}%",
+                     "this machine (all time)",
+                     "bi-speedometer2",    C["blue"]),
+            kpi_card("On-Time Delivery", otd_str,
+                     "this machine's orders",
+                     "bi-calendar2-check", C["cyan"]),
+            kpi_card("Farm-Out (WC)",    f"${fo_cost:,.0f}",
+                     f"{wc} work center total",
+                     "bi-truck",           C["amber"]),
+            kpi_card("Maint. Urgency",  urgency,
+                     f"health score: {health}",
+                     "bi-bell-fill",       _urgency_color(urgency)),
+            kpi_card("Orders In Prog.",  f"{orders}",
+                     "open + in progress",
+                     "bi-list-task",       C["purple"]),
+        ]
+
+        filter_badge = [
+            html.I(className="bi bi-funnel-fill me-2",
+                   style={"color": C["blue"]}),
+            html.Span("Filtered: ", style={"fontWeight": "600", "color": C["text"]}),
+            html.Span(machine_name,  style={"fontWeight": "700", "color": C["blue"]}),
+            html.Span(" — KPIs show this machine only · click the bar again to clear",
+                      style={"color": C["muted"], "fontSize": "0.78rem", "marginLeft": "6px"}),
+        ]
+        clear_btn_style = {"display": "inline-flex", "alignItems": "center"}
+
+    else:
+        # ---- Fleet-wide KPIs --------------------------------------------
+        mc   = backend.get_machine_status_counts()
+        kpis = backend.get_performance_kpis()
+
+        total  = int(mc.get("total", 0))
+        active = int(mc.get("active", 0))
+        maint  = int(mc.get("maintenance", 0))
+        idle   = int(mc.get("idle", 0))
+        util   = kpis.get("avg_utilization_pct", "—")
+        otd    = kpis.get("avg_otd_pct", "—")
+        cost   = kpis.get("ytd_farmout_cost", 0) or 0
+        prem   = kpis.get("avg_cost_premium_pct", "—")
+        crit   = int(kpis.get("critical_machines", 0))
+        warn   = int(kpis.get("warning_machines", 0))
+        orders = int(kpis.get("orders_in_progress", 0))
+
+        kpi_row = [
+            kpi_card("Active Machines",    f"{active}/{total}",
+                     f"{maint} down · {idle} idle",  "bi-cpu-fill",       C["green"]),
+            kpi_card("Avg Utilization",    f"{util}%",
+                     "latest period",               "bi-speedometer2",    C["blue"]),
+            kpi_card("On-Time Delivery",   f"{otd}%",
+                     "latest period",               "bi-calendar2-check", C["cyan"]),
+            kpi_card("Farm-Out Cost YTD",  f"${cost:,.0f}",
+                     f"+{prem}% vs in-house",        "bi-truck",           C["amber"]),
+            kpi_card("Maint. Alerts",      f"{crit} Critical",
+                     f"{warn} warnings",             "bi-bell-fill",       C["red"]),
+            kpi_card("Orders In Progress", f"{orders}",
+                     "open + in progress",           "bi-list-task",       C["purple"]),
+        ]
+
+        filter_badge   = html.Span(
+            [html.I(className="bi bi-bar-chart-fill me-2",
+                    style={"color": C["muted"]}),
+             "Click a bar in the utilization chart to filter KPIs by machine"],
+            style={"color": C["muted"], "fontSize": "0.78rem"},
+        )
+        clear_btn_style = {"display": "none"}
+
+    # ── Utilization bar — highlight selected machine ───────────────────────
     util_df = backend.get_utilization_by_machine()
     fig_util = go.Figure()
     if not util_df.empty:
         wcs = util_df["work_center"].unique().tolist()
-        for wc in wcs:
-            sub = util_df[util_df["work_center"] == wc]
+        for wc_name in wcs:
+            sub      = util_df[util_df["work_center"] == wc_name]
+            base_clr = C["chart"][wcs.index(wc_name) % len(C["chart"])]
+
+            if machine_id is not None:
+                colors    = [base_clr if mid == machine_id else "#cbd5e1"
+                             for mid in sub["machine_id"]]
+                opacities = [1.0 if mid == machine_id else 0.3
+                             for mid in sub["machine_id"]]
+            else:
+                colors    = [base_clr] * len(sub)
+                opacities = [1.0] * len(sub)
+
             fig_util.add_trace(go.Bar(
-                name=wc, x=sub["machine_name"], y=sub["avg_utilization_pct"],
-                marker_color=C["chart"][wcs.index(wc) % len(C["chart"])],
+                name=wc_name,
+                x=sub["machine_name"],
+                y=sub["avg_utilization_pct"],
+                customdata=sub["machine_id"],
+                marker=dict(color=colors, opacity=opacities),
                 hovertemplate="<b>%{x}</b><br>Utilization: %{y:.1f}%<extra></extra>",
             ))
         fig_util.add_hline(y=80, line_dash="dot", line_color=C["amber"],
                            annotation_text="Target 80%",
                            annotation_font_color=C["amber"])
     _style_fig(fig_util)
-    fig_util.update_layout(barmode="group", showlegend=True,
-                           legend=dict(orientation="h", y=-0.25, font_color=C["muted"]))
+    fig_util.update_layout(
+        barmode="group", showlegend=True,
+        legend=dict(orientation="h", y=-0.25, font_color=C["muted"]),
+        clickmode="event",
+    )
     fig_util.update_yaxes(range=[0, 110], ticksuffix="%")
 
     # ── Maintenance donut ──────────────────────────────────────────────────
@@ -248,4 +382,5 @@ def refresh_command_centre(_):
     _style_fig(fig_cap)
     fig_cap.update_yaxes(range=[0, 115], ticksuffix="%")
 
-    return kpi_row, fig_util, fig_donut, fig_otd, fig_fo, fig_cap
+    return (kpi_row, filter_badge, clear_btn_style,
+            fig_util, fig_donut, fig_otd, fig_fo, fig_cap)

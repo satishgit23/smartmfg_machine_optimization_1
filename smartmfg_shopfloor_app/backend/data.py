@@ -112,13 +112,14 @@ class Backend:
     def get_utilization_by_machine(self) -> pd.DataFrame:
         return self._query(f"""
             SELECT
+              m.machine_id,
               m.machine_name,
               m.work_center,
               ROUND(AVG(g.utilization_pct), 1) AS avg_utilization_pct,
               ROUND(AVG(g.efficiency_pct),  1) AS avg_efficiency_pct
             FROM {FQN}.gold_machine_utilization g
             JOIN {FQN}.silver_machines m ON g.machine_id = m.machine_id
-            GROUP BY m.machine_name, m.work_center
+            GROUP BY m.machine_id, m.machine_name, m.work_center
             ORDER BY avg_utilization_pct DESC
         """)
 
@@ -183,6 +184,66 @@ class Backend:
             GROUP BY work_center, load_status
             ORDER BY avg_capacity_pct DESC
         """)
+
+    def get_machine_kpis(self, machine_id: str) -> dict:
+        """Return KPIs scoped to a single machine for the Command Centre filter."""
+        df = self._query(f"""
+            SELECT
+              m.machine_name,
+              m.machine_type,
+              m.work_center,
+              m.status                                             AS machine_status,
+              ROUND(COALESCE(util.avg_util, 0), 1)                AS avg_utilization_pct,
+              otd.avg_otd                                          AS avg_otd_pct,
+              COALESCE(maint.urgency, 'Unknown')                   AS maintenance_urgency,
+              ROUND(COALESCE(maint.health, 0), 1)                 AS health_score,
+              COALESCE(wo.in_prog, 0)                             AS orders_in_progress,
+              COALESCE(fo.wc_farmout, 0)                          AS wc_farmout_cost
+            FROM (
+              SELECT machine_id, machine_name, machine_type, work_center, status
+              FROM {FQN}.silver_machines WHERE machine_id = '{machine_id}'
+            ) m
+            LEFT JOIN (
+              SELECT ROUND(AVG(utilization_pct), 1) AS avg_util
+              FROM {FQN}.gold_machine_utilization
+              WHERE machine_id = '{machine_id}'
+            ) util ON TRUE
+            LEFT JOIN (
+              SELECT ROUND(
+                SUM(CASE WHEN is_late = FALSE THEN 1.0 ELSE 0 END) * 100
+                / NULLIF(COUNT(*), 0), 1
+              ) AS avg_otd
+              FROM {FQN}.silver_work_orders
+              WHERE status = 'Complete' AND machine_id = '{machine_id}'
+            ) otd ON TRUE
+            LEFT JOIN (
+              SELECT maintenance_urgency AS urgency,
+                     ROUND(MIN(min_health_score), 1) AS health
+              FROM {FQN}.gold_predictive_maintenance
+              WHERE machine_id = '{machine_id}'
+                AND reading_date = (
+                  SELECT MAX(reading_date)
+                  FROM {FQN}.gold_predictive_maintenance
+                  WHERE machine_id = '{machine_id}'
+                )
+              GROUP BY maintenance_urgency
+              LIMIT 1
+            ) maint ON TRUE
+            LEFT JOIN (
+              SELECT COUNT(*) AS in_prog
+              FROM {FQN}.silver_work_orders
+              WHERE machine_id = '{machine_id}'
+                AND status IN ('Open', 'In Progress')
+            ) wo ON TRUE
+            LEFT JOIN (
+              SELECT ROUND(SUM(total_farm_out_cost), 0) AS wc_farmout
+              FROM {FQN}.gold_farmout_analysis
+              WHERE work_center = (
+                SELECT work_center FROM {FQN}.silver_machines WHERE machine_id = '{machine_id}'
+              )
+            ) fo ON TRUE
+        """)
+        return df.iloc[0].to_dict() if not df.empty else {}
 
     # ── Machine Fleet ──────────────────────────────────────────────────────
 
