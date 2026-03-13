@@ -24,6 +24,7 @@ from components.ui import C
 import pages.command_center    # noqa: F401
 import pages.machine_fleet     # noqa: F401
 import pages.machine_inspector # noqa: F401
+import pages.machine_agent     # noqa: F401
 
 
 # ── Navigation ─────────────────────────────────────────────────────────────
@@ -73,6 +74,10 @@ _tabs = dbc.Tabs(
                 label="🔍  Machine Inspector",
                 label_style={"color": "#000000", "fontWeight": "600", "fontSize": "0.9rem"},
                 active_label_style={"color": "#2563eb", "fontWeight": "700", "fontSize": "0.9rem"}),
+        dbc.Tab(tab_id="agent",
+                label="🤖  Recovery Agent",
+                label_style={"color": "#000000", "fontWeight": "600", "fontSize": "0.9rem"},
+                active_label_style={"color": "#7c3aed", "fontWeight": "700", "fontSize": "0.9rem"}),
     ],
     style={"backgroundColor": "#ffffff",
            "borderBottom": "2px solid #e2e8f0",
@@ -86,7 +91,7 @@ app.layout = html.Div([
     _navbar,
     _tabs,
 
-    # All three pages always in DOM — one visible at a time
+    # All pages always in DOM — one visible at a time
     html.Div([
         html.Div(id="page-command",
                  children=pages.command_center.layout()),
@@ -95,6 +100,9 @@ app.layout = html.Div([
                  style={"display": "none"}),
         html.Div(id="page-inspector",
                  children=pages.machine_inspector.layout(),
+                 style={"display": "none"}),
+        html.Div(id="page-agent",
+                 children=pages.machine_agent.layout(),
                  style={"display": "none"}),
     ], style={
         "backgroundColor": C["bg"],
@@ -114,6 +122,7 @@ app.layout = html.Div([
     Output("page-command",   "style"),
     Output("page-fleet",     "style"),
     Output("page-inspector", "style"),
+    Output("page-agent",     "style"),
     Input("page-tabs",       "active_tab"),
 )
 def toggle_pages(tab):
@@ -123,6 +132,7 @@ def toggle_pages(tab):
         show if tab == "command"   else hide,
         show if tab == "fleet"     else hide,
         show if tab == "inspector" else hide,
+        show if tab == "agent"     else hide,
     )
 
 

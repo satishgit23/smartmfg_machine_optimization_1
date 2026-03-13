@@ -41,6 +41,18 @@ class Backend:
             cols = [d[0] for d in cur.description]
             return pd.DataFrame(cur.fetchall(), columns=cols)
 
+    def _execute(self, sql: str) -> None:
+        """Execute a DML statement (INSERT / UPDATE / DELETE) with no result set."""
+        try:
+            self._run_dml(sql)
+        except Exception:
+            self._conn = self._make_conn()
+            self._run_dml(sql)
+
+    def _run_dml(self, sql: str) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(sql)
+
     def _scalar(self, sql: str, default=None):
         df = self._query(sql)
         if df.empty:
