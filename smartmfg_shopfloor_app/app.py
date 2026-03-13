@@ -25,6 +25,7 @@ import pages.command_center    # noqa: F401
 import pages.machine_fleet     # noqa: F401
 import pages.machine_inspector # noqa: F401
 import pages.machine_agent     # noqa: F401
+import pages.genie_tab         # noqa: F401
 
 
 # ── Navigation ─────────────────────────────────────────────────────────────
@@ -78,6 +79,10 @@ _tabs = dbc.Tabs(
                 label="🤖  Recovery Agent",
                 label_style={"color": "#000000", "fontWeight": "600", "fontSize": "0.9rem"},
                 active_label_style={"color": "#7c3aed", "fontWeight": "700", "fontSize": "0.9rem"}),
+        dbc.Tab(tab_id="genie",
+                label="✨  SmartMFG Genie",
+                label_style={"color": "#000000", "fontWeight": "600", "fontSize": "0.9rem"},
+                active_label_style={"color": "#d97706", "fontWeight": "700", "fontSize": "0.9rem"}),
     ],
     style={"backgroundColor": "#ffffff",
            "borderBottom": "2px solid #e2e8f0",
@@ -104,6 +109,9 @@ app.layout = html.Div([
         html.Div(id="page-agent",
                  children=pages.machine_agent.layout(),
                  style={"display": "none"}),
+        html.Div(id="page-genie",
+                 children=pages.genie_tab.layout(),
+                 style={"display": "none"}),
     ], style={
         "backgroundColor": C["bg"],
         "minHeight":       "calc(100vh - 100px)",
@@ -123,6 +131,7 @@ app.layout = html.Div([
     Output("page-fleet",     "style"),
     Output("page-inspector", "style"),
     Output("page-agent",     "style"),
+    Output("page-genie",     "style"),
     Input("page-tabs",       "active_tab"),
 )
 def toggle_pages(tab):
@@ -133,6 +142,7 @@ def toggle_pages(tab):
         show if tab == "fleet"     else hide,
         show if tab == "inspector" else hide,
         show if tab == "agent"     else hide,
+        show if tab == "genie"     else hide,
     )
 
 
