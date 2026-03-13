@@ -491,17 +491,40 @@ def _render_farmout():
     return html.Div([kpi_row, charts, table_section])
 
 
+# ---- Embedded dashboard (AI/BI client SDK) ----------------------------------
+
+def _render_embedded():
+    """Render the container div for the @databricks/aibi-client SDK."""
+    return html.Div([
+        html.Div(
+            id="aibi-dashboard-container",
+            style={
+                "width":         "100%",
+                "minHeight":     "800px",
+                "border":        "1px solid #e2e8f0",
+                "borderRadius":  "10px",
+                "overflow":      "hidden",
+                "backgroundColor": "#f8fafc",
+            },
+        ),
+        # Trigger JS re-init on each render via a clientside no-op
+        dcc.Store(id="aibi-trigger", data=1),
+    ])
+
+
 # ---- Tab config -------------------------------------------------------------
 
 _SUBTABS = [
-    ("util",        "Machine Utilization",     _BLUE),
-    ("scheduling",  "Scheduling Performance",  _AMBER),
-    ("maintenance", "Predictive Maintenance",  _RED),
-    ("capacity",    "Capacity Planning",       _PURPLE),
-    ("farmout",     "Farm-Out Analysis",       _GREEN),
+    ("embedded",    "Live Dashboard",           _BLUE),
+    ("util",        "Machine Utilization",      _BLUE),
+    ("scheduling",  "Scheduling Performance",   _AMBER),
+    ("maintenance", "Predictive Maintenance",   _RED),
+    ("capacity",    "Capacity Planning",        _PURPLE),
+    ("farmout",     "Farm-Out Analysis",        _GREEN),
 ]
 
 _RENDERERS = {
+    "embedded":    _render_embedded,
     "util":        _render_utilization,
     "scheduling":  _render_scheduling,
     "maintenance": _render_maintenance,
@@ -515,7 +538,7 @@ _RENDERERS = {
 def layout():
     tabs = dbc.Tabs(
         id="dash-subtabs",
-        active_tab="util",
+        active_tab="embedded",
         children=[
             dbc.Tab(
                 tab_id=tid,
@@ -533,8 +556,7 @@ def layout():
     return html.Div([
         page_title(
             "Machine Optimization Dashboard",
-            "Full SmartMFG dashboard -- Utilization, Scheduling, Maintenance, "
-            "Capacity Planning, and Farm-Out Analysis",
+            "Live SmartMFG dashboard powered by @databricks/aibi-client SDK",
         ),
         tabs,
         html.Div(id="dash-content", children=_loading_div()),
